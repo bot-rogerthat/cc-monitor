@@ -5,7 +5,7 @@
 # Requires: jq, curl
 
 # --- Configuration (override via environment variables) ---
-CACHE_TTL="${CC_MONITOR_CACHE_TTL:-30}"
+CACHE_TTL="${CC_MONITOR_CACHE_TTL:-60}"
 STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
@@ -85,11 +85,13 @@ fetch_usage() {
   local token
   token=$(get_token)
   [ -z "$token" ] && return 1
-  curl -s --max-time 5 \
+  local http_code
+  http_code=$(curl -s --max-time 5 -w '%{http_code}' -o "$USAGE_CACHE.tmp" \
     -H "Authorization: Bearer $token" \
     -H "anthropic-beta: oauth-2025-04-20" \
-    "https://api.anthropic.com/api/oauth/usage" > "$USAGE_CACHE.tmp" 2>/dev/null
-  if jq -e '.five_hour' "$USAGE_CACHE.tmp" >/dev/null 2>&1; then
+    "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
+  # Accept only HTTP 200 with valid JSON containing utilization data
+  if [ "$http_code" = "200" ] && jq -e '.five_hour.utilization // .seven_day.utilization' "$USAGE_CACHE.tmp" >/dev/null 2>&1; then
     mv "$USAGE_CACHE.tmp" "$USAGE_CACHE"
   else
     rm -f "$USAGE_CACHE.tmp"
