@@ -3,7 +3,7 @@
 Lightweight Claude Code status line monitor. Shows context window, 5-hour and 7-day subscription usage with threshold notifications. Single bash script, requires only `jq` and `curl`.
 
 ```
-🟢 ctx:12% 🟢 5h:41% 🟡 7d:72%
+🟢 ctx:42% 🟢 5h:47% ~1h12m 🟡 7d:72% 🟠 ex:93%
 ```
 
 ## Install
@@ -35,17 +35,21 @@ Or manually add to `~/.claude/settings.json`:
 
 ## How it works
 
-Claude Code calls the script periodically, passing session JSON on stdin. The script extracts context window usage from that JSON. For subscription limits (5-hour and 7-day windows), it queries `api.anthropic.com/api/oauth/usage` using your OAuth token and caches the response for 30 seconds.
+Claude Code calls the script periodically, passing session JSON on stdin. The script extracts context window usage from that JSON. For subscription limits (5-hour and 7-day windows), it queries `api.anthropic.com/api/oauth/usage` using your OAuth token and caches the response for 180 seconds.
 
 When usage crosses a threshold, a native OS notification is sent (macOS: Notification Center with sound, Linux: `notify-send`).
+
+On HTTP 429 (rate limit), the script backs off for 5 minutes (or respects `Retry-After` header) and serves stale cached data in the meantime.
 
 ## What it shows
 
 | Metric | Source | Description |
 |--------|--------|-------------|
-| `ctx` | stdin JSON | Context window usage (current session) |
+| `ctx` | stdin JSON | Context window usage (% of usable space before auto-compact at 80%) |
 | `5h` | Anthropic API | 5-hour rolling window (resets every 5h) |
+| `~Xh Ym` | Anthropic API | Time until 5h window resets |
 | `7d` | Anthropic API | 7-day rolling window (weekly limit) |
+| `ex` | Anthropic API | Extra usage / overage budget (only shown if enabled and > 0%) |
 
 ## Icons
 
@@ -80,11 +84,12 @@ Override via environment variables:
 | `CC_MONITOR_STATE_DIR` | `/tmp/claude-monitor` | State file location |
 | `CC_MONITOR_NOTIFY` | `true` | Enable/disable notifications |
 | `CC_MONITOR_NOTIFY_START` | `50` | Minimum % to start notifying |
+| `CC_MONITOR_CTX_USABLE` | `80` | Context window usable % (before auto-compact) |
 
-Example — disable notifications and cache for 60s:
+Example — disable notifications:
 
 ```bash
-CC_MONITOR_NOTIFY=false CC_MONITOR_CACHE_TTL=60 ~/.claude/cc-monitor.sh
+CC_MONITOR_NOTIFY=false ~/.claude/cc-monitor.sh
 ```
 
 In `settings.json`:
@@ -93,7 +98,7 @@ In `settings.json`:
 {
   "statusLine": {
     "type": "command",
-    "command": "CC_MONITOR_CACHE_TTL=60 ~/.claude/cc-monitor.sh"
+    "command": "CC_MONITOR_NOTIFY=false ~/.claude/cc-monitor.sh"
   }
 }
 ```
