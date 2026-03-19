@@ -228,18 +228,6 @@ fi
 
 echo "$CTX" > "$CTX_STATE"
 
-# --- Progress bar ---
-bar() {
-  local pct=$1 width=8
-  local filled=$(( pct * width / 100 ))
-  if [ "$filled" -gt "$width" ]; then filled=$width; fi
-  local empty=$((width - filled))
-  local out=""
-  for ((i=0; i<filled; i++)); do out+="█"; done
-  for ((i=0; i<empty; i++)); do out+="░"; done
-  echo "$out"
-}
-
 # --- Status line output ---
 pick_icon() {
   local p=$1
@@ -251,21 +239,18 @@ pick_icon() {
   fi
 }
 
-CTX_BAR=$(bar "$CTX")
 CTX_ICON=$(pick_icon "$CTX")
 
 if [ "$FIVE_H" != "?" ]; then
-  FIVE_BAR=$(bar "$FIVE_H")
   FIVE_ICON=$(pick_icon "$FIVE_H")
-  SEVEN_BAR=$(bar "$SEVEN_D")
   SEVEN_ICON=$(pick_icon "$SEVEN_D")
 
-  OUT="${CTX_ICON} ctx:${CTX_BAR} ${CTX}%"
-  OUT+=" ${FIVE_ICON} 5h:${FIVE_BAR} ${FIVE_H}%"
+  OUT="${CTX_ICON} ctx:${CTX}%"
+  OUT+=" ${FIVE_ICON} 5h:${FIVE_H}%"
   if [ -n "$FIVE_RESET" ]; then
     OUT+=" ~${FIVE_RESET}"
   fi
-  OUT+=" ${SEVEN_ICON} 7d:${SEVEN_BAR} ${SEVEN_D}%"
+  OUT+=" ${SEVEN_ICON} 7d:${SEVEN_D}%"
 
   if [ -n "$EXTRA" ] && [ "$EXTRA" -gt 0 ] 2>/dev/null; then
     EXTRA_ICON=$(pick_icon "$EXTRA")
@@ -274,5 +259,5 @@ if [ "$FIVE_H" != "?" ]; then
 
   echo "$OUT"
 else
-  echo "${CTX_ICON} ctx:${CTX_BAR} ${CTX}%"
+  echo "${CTX_ICON} ctx:${CTX}%"
 fi
