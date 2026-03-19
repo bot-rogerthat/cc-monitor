@@ -75,7 +75,8 @@ Override via environment variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CC_MONITOR_CACHE_TTL` | `60` | Seconds between API calls |
+| `CC_MONITOR_CACHE_TTL` | `180` | Seconds between API calls |
+| `CC_MONITOR_BACKOFF_TTL` | `300` | Seconds to wait after HTTP 429 |
 | `CC_MONITOR_STATE_DIR` | `/tmp/claude-monitor` | State file location |
 | `CC_MONITOR_NOTIFY` | `true` | Enable/disable notifications |
 | `CC_MONITOR_NOTIFY_START` | `50` | Minimum % to start notifying |
