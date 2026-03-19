@@ -5,7 +5,8 @@
 # Requires: jq, curl
 
 # --- Configuration (override via environment variables) ---
-CACHE_TTL="${CC_MONITOR_CACHE_TTL:-60}"
+CACHE_TTL="${CC_MONITOR_CACHE_TTL:-180}"
+BACKOFF_TTL="${CC_MONITOR_BACKOFF_TTL:-300}"
 STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
@@ -82,6 +83,17 @@ FIVE_H="?"
 SEVEN_D="?"
 
 fetch_usage() {
+  # Respect backoff from previous 429
+  local backoff_file="$STATE_DIR/backoff-until"
+  if [ -f "$backoff_file" ]; then
+    local blocked_until
+    blocked_until=$(cat "$backoff_file" 2>/dev/null || echo 0)
+    if [ "$(date +%s)" -lt "$blocked_until" ]; then
+      return 1
+    fi
+    rm -f "$backoff_file"
+  fi
+
   local token
   token=$(get_token)
   [ -z "$token" ] && return 1
@@ -90,9 +102,14 @@ fetch_usage() {
     -H "Authorization: Bearer $token" \
     -H "anthropic-beta: oauth-2025-04-20" \
     "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
-  # Accept only HTTP 200 with valid JSON containing utilization data
+
   if [ "$http_code" = "200" ] && jq -e '.five_hour.utilization // .seven_day.utilization' "$USAGE_CACHE.tmp" >/dev/null 2>&1; then
     mv "$USAGE_CACHE.tmp" "$USAGE_CACHE"
+    rm -f "$backoff_file"
+  elif [ "$http_code" = "429" ]; then
+    # Back off for BACKOFF_TTL seconds (default 5 min)
+    echo "$(( $(date +%s) + BACKOFF_TTL ))" > "$backoff_file"
+    rm -f "$USAGE_CACHE.tmp"
   else
     rm -f "$USAGE_CACHE.tmp"
   fi
