@@ -85,7 +85,6 @@ get_token() {
 FIVE_H="?"
 SEVEN_D="?"
 FIVE_RESET=""
-EXTRA=""
 
 fetch_usage() {
   local backoff_file="$STATE_DIR/backoff-until"
@@ -146,7 +145,6 @@ fi
 if [ -f "$USAGE_CACHE" ]; then
   FIVE_H=$(jq -r '.five_hour.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
   SEVEN_D=$(jq -r '.seven_day.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
-  EXTRA=$(jq -r '.extra_usage.utilization // empty' "$USAGE_CACHE" | cut -d. -f1)
 
   # Reset timer: time until 5h window resets
   local_resets_at=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE")
@@ -250,11 +248,6 @@ if [ "$FIVE_H" != "?" ]; then
     OUT+=" ~${FIVE_RESET}"
   fi
   OUT+=" ${SEVEN_ICON} 7d:${SEVEN_D}%"
-
-  if [ -n "$EXTRA" ] && [ "$EXTRA" -gt 0 ] 2>/dev/null; then
-    EXTRA_ICON=$(pick_icon "$EXTRA")
-    OUT+=" ${EXTRA_ICON} ex:${EXTRA}%"
-  fi
 
   echo "$OUT"
 else

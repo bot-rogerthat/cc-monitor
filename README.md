@@ -3,7 +3,7 @@
 Lightweight Claude Code status line monitor. Shows context window, 5-hour and 7-day subscription usage with threshold notifications. Single bash script, requires only `jq` and `curl`.
 
 ```
-🟢 ctx:42% 🟢 5h:47% ~1h12m 🟡 7d:72% 🟠 ex:93%
+🟢 ctx:42% 🟢 5h:47% ~1h12m 🟡 7d:72%
 ```
 
 ## Install
@@ -49,7 +49,6 @@ On HTTP 429 (rate limit), the script backs off for 5 minutes (or respects `Retry
 | `5h` | Anthropic API | 5-hour rolling window (resets every 5h) |
 | `~Xh Ym` | Anthropic API | Time until 5h window resets |
 | `7d` | Anthropic API | 7-day rolling window (weekly limit) |
-| `ex` | Anthropic API | Extra usage / overage budget (only shown if enabled and > 0%) |
 
 ## Icons
 
