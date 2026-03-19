@@ -1,7 +1,7 @@
 #!/bin/bash
 # cc-monitor — Claude Code status line: context window + subscription usage
 #
-# Shows: ctx% | 5h% | 7d% with color-coded icons and macOS/Linux notifications
+# Shows: ctx bar | 5h bar + reset timer | 7d bar | extra usage
 # Requires: jq, curl
 
 # --- Configuration (override via environment variables) ---
@@ -10,6 +10,7 @@ BACKOFF_TTL="${CC_MONITOR_BACKOFF_TTL:-300}"
 STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
+CTX_USABLE_PCT="${CC_MONITOR_CTX_USABLE:-80}"
 
 # --- Install mode ---
 if [[ "${1:-}" == "--install" ]]; then
@@ -56,8 +57,10 @@ USAGE_NOTIFY="$STATE_DIR/usage-notify-$$"
 find "$STATE_DIR" -name 'ctx-*' -mtime +1 -delete 2>/dev/null || true
 find "$STATE_DIR" -name 'usage-notify-*' -mtime +1 -delete 2>/dev/null || true
 
-# --- Context window ---
-CTX=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+# --- Context window (usable = 80% before auto-compact) ---
+CTX_RAW=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+CTX=$(( CTX_RAW * 100 / CTX_USABLE_PCT ))
+if [ "$CTX" -gt 100 ]; then CTX=100; fi
 
 LAST_CTX=0
 [ -f "$CTX_STATE" ] && LAST_CTX=$(cat "$CTX_STATE" 2>/dev/null || echo 0)
@@ -81,9 +84,10 @@ get_token() {
 # --- Subscription usage (cached) ---
 FIVE_H="?"
 SEVEN_D="?"
+FIVE_RESET=""
+EXTRA=""
 
 fetch_usage() {
-  # Respect backoff from previous 429
   local backoff_file="$STATE_DIR/backoff-until"
   if [ -f "$backoff_file" ]; then
     local blocked_until
@@ -97,21 +101,27 @@ fetch_usage() {
   local token
   token=$(get_token)
   [ -z "$token" ] && return 1
-  local http_code
-  http_code=$(curl -s --max-time 5 -w '%{http_code}' -o "$USAGE_CACHE.tmp" \
+  local http_code retry_after
+  http_code=$(curl -sS --max-time 5 -w '%{http_code}' -o "$USAGE_CACHE.tmp" \
+    -D "$USAGE_CACHE.headers" \
     -H "Authorization: Bearer $token" \
     -H "anthropic-beta: oauth-2025-04-20" \
     "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
 
   if [ "$http_code" = "200" ] && jq -e '.five_hour.utilization // .seven_day.utilization' "$USAGE_CACHE.tmp" >/dev/null 2>&1; then
     mv "$USAGE_CACHE.tmp" "$USAGE_CACHE"
-    rm -f "$backoff_file"
+    rm -f "$backoff_file" "$USAGE_CACHE.headers"
   elif [ "$http_code" = "429" ]; then
-    # Back off for BACKOFF_TTL seconds (default 5 min)
-    echo "$(( $(date +%s) + BACKOFF_TTL ))" > "$backoff_file"
-    rm -f "$USAGE_CACHE.tmp"
+    # Parse Retry-After header, fallback to BACKOFF_TTL
+    retry_after=$(grep -i 'retry-after' "$USAGE_CACHE.headers" 2>/dev/null | tr -d '\r' | awk '{print $2}')
+    if [ -n "$retry_after" ] && [ "$retry_after" -gt 0 ] 2>/dev/null; then
+      echo "$(( $(date +%s) + retry_after ))" > "$backoff_file"
+    else
+      echo "$(( $(date +%s) + BACKOFF_TTL ))" > "$backoff_file"
+    fi
+    rm -f "$USAGE_CACHE.tmp" "$USAGE_CACHE.headers"
   else
-    rm -f "$USAGE_CACHE.tmp"
+    rm -f "$USAGE_CACHE.tmp" "$USAGE_CACHE.headers"
   fi
 }
 
@@ -129,13 +139,35 @@ if [ -f "$USAGE_CACHE" ]; then
     fetch_usage &
   fi
 else
-  # First run: fetch synchronously so we have data to show
   fetch_usage || true
 fi
 
+# Parse cache (stale data is better than no data)
 if [ -f "$USAGE_CACHE" ]; then
   FIVE_H=$(jq -r '.five_hour.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
   SEVEN_D=$(jq -r '.seven_day.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
+  EXTRA=$(jq -r '.extra_usage.utilization // empty' "$USAGE_CACHE" | cut -d. -f1)
+
+  # Reset timer: time until 5h window resets
+  local_resets_at=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE")
+  if [ -n "$local_resets_at" ]; then
+    if [[ "$OSTYPE" == darwin* ]]; then
+      reset_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${local_resets_at%%.*}" "+%s" 2>/dev/null || echo 0)
+    else
+      reset_epoch=$(date -d "${local_resets_at}" "+%s" 2>/dev/null || echo 0)
+    fi
+    now=$(date +%s)
+    remaining=$((reset_epoch - now))
+    if [ "$remaining" -gt 0 ]; then
+      hours=$((remaining / 3600))
+      mins=$(( (remaining % 3600) / 60 ))
+      if [ "$hours" -gt 0 ]; then
+        FIVE_RESET="${hours}h${mins}m"
+      else
+        FIVE_RESET="${mins}m"
+      fi
+    fi
+  fi
 fi
 
 # --- Notifications ---
@@ -160,7 +192,6 @@ notify() {
   local label="$1" pct="$2" last="$3"
   local thresholds="$NOTIFY_START"
 
-  # Add thresholds: every 10% from start+10 to 90, then every 1% from 91
   local t=$((NOTIFY_START + 10))
   while [ "$t" -le 90 ]; do
     thresholds="$thresholds $t"
@@ -197,6 +228,18 @@ fi
 
 echo "$CTX" > "$CTX_STATE"
 
+# --- Progress bar ---
+bar() {
+  local pct=$1 width=8
+  local filled=$(( pct * width / 100 ))
+  if [ "$filled" -gt "$width" ]; then filled=$width; fi
+  local empty=$((width - filled))
+  local out=""
+  for ((i=0; i<filled; i++)); do out+="█"; done
+  for ((i=0; i<empty; i++)); do out+="░"; done
+  echo "$out"
+}
+
 # --- Status line output ---
 pick_icon() {
   local p=$1
@@ -208,11 +251,28 @@ pick_icon() {
   fi
 }
 
+CTX_BAR=$(bar "$CTX")
 CTX_ICON=$(pick_icon "$CTX")
+
 if [ "$FIVE_H" != "?" ]; then
+  FIVE_BAR=$(bar "$FIVE_H")
   FIVE_ICON=$(pick_icon "$FIVE_H")
+  SEVEN_BAR=$(bar "$SEVEN_D")
   SEVEN_ICON=$(pick_icon "$SEVEN_D")
-  echo "${CTX_ICON} ctx:${CTX}% ${FIVE_ICON} 5h:${FIVE_H}% ${SEVEN_ICON} 7d:${SEVEN_D}%"
+
+  OUT="${CTX_ICON} ctx:${CTX_BAR} ${CTX}%"
+  OUT+=" ${FIVE_ICON} 5h:${FIVE_BAR} ${FIVE_H}%"
+  if [ -n "$FIVE_RESET" ]; then
+    OUT+=" ~${FIVE_RESET}"
+  fi
+  OUT+=" ${SEVEN_ICON} 7d:${SEVEN_BAR} ${SEVEN_D}%"
+
+  if [ -n "$EXTRA" ] && [ "$EXTRA" -gt 0 ] 2>/dev/null; then
+    EXTRA_ICON=$(pick_icon "$EXTRA")
+    OUT+=" ${EXTRA_ICON} ex:${EXTRA}%"
+  fi
+
+  echo "$OUT"
 else
-  echo "${CTX_ICON} ctx:${CTX}%"
+  echo "${CTX_ICON} ctx:${CTX_BAR} ${CTX}%"
 fi
