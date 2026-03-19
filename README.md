@@ -1,6 +1,6 @@
 # cc-monitor
 
-Zero-dependency Claude Code status line monitor. Shows context window, 5-hour and 7-day subscription usage with threshold notifications.
+Lightweight Claude Code status line monitor. Shows context window, 5-hour and 7-day subscription usage with threshold notifications. Single bash script, requires only `jq` and `curl`.
 
 ```
 🟢 ctx:12% 🟢 5h:41% 🟡 7d:72%
