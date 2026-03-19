@@ -2,7 +2,7 @@
 # cc-monitor — Claude Code status line: context window + subscription usage
 #
 # Shows: ctx% | 5h% | 7d% with color-coded icons and macOS/Linux notifications
-# Zero dependencies beyond jq, curl, and your OS credential store
+# Requires: jq, curl
 
 # --- Configuration (override via environment variables) ---
 CACHE_TTL="${CC_MONITOR_CACHE_TTL:-30}"
