@@ -4,8 +4,6 @@
 # Shows: ctx% | 5h% | 7d% with color-coded icons and macOS/Linux notifications
 # Zero dependencies beyond jq, curl, and your OS credential store
 
-set -euo pipefail
-
 # --- Configuration (override via environment variables) ---
 CACHE_TTL="${CC_MONITOR_CACHE_TTL:-30}"
 STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
@@ -38,10 +36,12 @@ if [[ "${1:-}" == "--install" ]]; then
 fi
 
 # --- Dependency check ---
-if ! command -v jq &>/dev/null; then
-  echo "jq required"
-  exit 0
-fi
+for dep in jq curl; do
+  if ! command -v "$dep" &>/dev/null; then
+    echo "$dep required"
+    exit 0
+  fi
+done
 
 # --- Init ---
 mkdir -p "$STATE_DIR"
@@ -106,9 +106,12 @@ cache_age() {
 
 if [ -f "$USAGE_CACHE" ]; then
   AGE=$(( $(date +%s) - $(cache_age "$USAGE_CACHE") ))
-  [ "$AGE" -gt "$CACHE_TTL" ] && fetch_usage &
+  if [ "$AGE" -gt "$CACHE_TTL" ]; then
+    fetch_usage &
+  fi
 else
-  fetch_usage
+  # First run: fetch synchronously so we have data to show
+  fetch_usage || true
 fi
 
 if [ -f "$USAGE_CACHE" ]; then
@@ -133,7 +136,7 @@ send_notification() {
 }
 
 notify() {
-  [[ "$NOTIFY_ENABLED" != "true" ]] && return
+  if [[ "$NOTIFY_ENABLED" != "true" ]]; then return; fi
 
   local label="$1" pct="$2" last="$3"
   local thresholds="$NOTIFY_START"
