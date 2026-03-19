@@ -151,11 +151,10 @@ if [ -f "$USAGE_CACHE" ]; then
   # Reset timer: time until 5h window resets
   local_resets_at=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE")
   if [ -n "$local_resets_at" ]; then
-    if [[ "$OSTYPE" == darwin* ]]; then
-      reset_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${local_resets_at%%.*}" "+%s" 2>/dev/null || echo 0)
-    else
-      reset_epoch=$(date -d "${local_resets_at}" "+%s" 2>/dev/null || echo 0)
-    fi
+    # Try GNU date first (-d), then BSD date (-j -f)
+    reset_epoch=$(date -d "${local_resets_at}" "+%s" 2>/dev/null \
+      || /usr/bin/date -j -f "%Y-%m-%dT%H:%M:%S" "${local_resets_at%%.*}" "+%s" 2>/dev/null \
+      || echo 0)
     now=$(date +%s)
     remaining=$((reset_epoch - now))
     if [ "$remaining" -gt 0 ]; then
