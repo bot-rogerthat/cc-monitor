@@ -84,6 +84,26 @@ Override via environment variables:
 | `CC_MONITOR_NOTIFY` | `true` | Enable/disable notifications |
 | `CC_MONITOR_NOTIFY_START` | `50` | Minimum % to start notifying |
 | `CC_MONITOR_CTX_USABLE` | `80` | Context window usable % (before auto-compact) |
+| `CC_MONITOR_PROCESS` | *(empty)* | Process name to monitor (shown when running) |
+
+### Process monitor
+
+Track if an autonomous agent (or any process) is running:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "CC_MONITOR_PROCESS=ralphex ~/.claude/cc-monitor.sh"
+  }
+}
+```
+
+When the process is running: `🟢 ctx:42% 🟢 5h:47% ~1h12m 🟡 7d:72% | ralphex:3`
+
+When not running, nothing extra is shown.
+
+### Other examples
 
 Example — disable notifications:
 

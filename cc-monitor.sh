@@ -11,6 +11,7 @@ STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
 CTX_USABLE_PCT="${CC_MONITOR_CTX_USABLE:-80}"
+PROCESS_NAME="${CC_MONITOR_PROCESS:-}"
 
 # --- Install mode ---
 if [[ "${1:-}" == "--install" ]]; then
@@ -225,6 +226,15 @@ fi
 
 echo "$CTX" > "$CTX_STATE"
 
+# --- Process monitor ---
+PROC_STATUS=""
+if [ -n "$PROCESS_NAME" ]; then
+  proc_count=$(pgrep -f "$PROCESS_NAME" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "$proc_count" -gt 0 ]; then
+    PROC_STATUS=" | ${PROCESS_NAME}:${proc_count}"
+  fi
+fi
+
 # --- Status line output ---
 pick_icon() {
   local p=$1
@@ -248,8 +258,9 @@ if [ "$FIVE_H" != "?" ]; then
     OUT+=" ~${FIVE_RESET}"
   fi
   OUT+=" ${SEVEN_ICON} 7d:${SEVEN_D}%"
+  OUT+="${PROC_STATUS}"
 
   echo "$OUT"
 else
-  echo "${CTX_ICON} ctx:${CTX}%"
+  echo "${CTX_ICON} ctx:${CTX}%${PROC_STATUS}"
 fi
