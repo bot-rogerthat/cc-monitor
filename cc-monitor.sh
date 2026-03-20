@@ -10,7 +10,6 @@ BACKOFF_TTL="${CC_MONITOR_BACKOFF_TTL:-300}"
 STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
-CTX_USABLE_PCT="${CC_MONITOR_CTX_USABLE:-80}"
 PROCESS_NAME="${CC_MONITOR_PROCESS:-}"
 
 # --- Install mode ---
@@ -58,10 +57,8 @@ USAGE_NOTIFY="$STATE_DIR/usage-notify-$$"
 find "$STATE_DIR" -name 'ctx-*' -mtime +1 -delete 2>/dev/null || true
 find "$STATE_DIR" -name 'usage-notify-*' -mtime +1 -delete 2>/dev/null || true
 
-# --- Context window (usable = 80% before auto-compact) ---
-CTX_RAW=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
-CTX=$(( CTX_RAW * 100 / CTX_USABLE_PCT ))
-if [ "$CTX" -gt 100 ]; then CTX=100; fi
+# --- Context window ---
+CTX=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
 
 LAST_CTX=0
 [ -f "$CTX_STATE" ] && LAST_CTX=$(cat "$CTX_STATE" 2>/dev/null || echo 0)

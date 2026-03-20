@@ -45,7 +45,7 @@ On HTTP 429 (rate limit), the script backs off for 5 minutes (or respects `Retry
 
 | Metric | Source | Description |
 |--------|--------|-------------|
-| `ctx` | stdin JSON | Context window usage (% of usable space before auto-compact at 80%) |
+| `ctx` | stdin JSON | Context window usage % |
 | `5h` | Anthropic API | 5-hour rolling window (resets every 5h) |
 | `~Xh Ym` | Anthropic API | Time until 5h window resets |
 | `7d` | Anthropic API | 7-day rolling window (weekly limit) |
@@ -83,7 +83,6 @@ Override via environment variables:
 | `CC_MONITOR_STATE_DIR` | `/tmp/claude-monitor` | State file location |
 | `CC_MONITOR_NOTIFY` | `true` | Enable/disable notifications |
 | `CC_MONITOR_NOTIFY_START` | `50` | Minimum % to start notifying |
-| `CC_MONITOR_CTX_USABLE` | `80` | Context window usable % (before auto-compact) |
 | `CC_MONITOR_PROCESS` | *(empty)* | Process name to monitor (shown when running) |
 
 ### Process monitor
