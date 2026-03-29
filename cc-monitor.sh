@@ -51,11 +51,10 @@ INPUT=$(cat)
 
 CTX_STATE="$STATE_DIR/ctx-$$"
 USAGE_CACHE="$STATE_DIR/usage-cache"
-USAGE_NOTIFY="$STATE_DIR/usage-notify-$$"
+USAGE_NOTIFY="$STATE_DIR/usage-notify"
 
 # Cleanup stale state files (older than 24h)
 find "$STATE_DIR" -name 'ctx-*' -mtime +1 -delete 2>/dev/null || true
-find "$STATE_DIR" -name 'usage-notify-*' -mtime +1 -delete 2>/dev/null || true
 
 # --- Context window ---
 CTX=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
