@@ -49,7 +49,7 @@ done
 mkdir -p "$STATE_DIR"
 INPUT=$(cat)
 
-CTX_STATE="$STATE_DIR/ctx-$$"
+CTX_STATE="$STATE_DIR/ctx-$PPID"
 USAGE_CACHE="$STATE_DIR/usage-cache"
 USAGE_NOTIFY="$STATE_DIR/usage-notify"
 
