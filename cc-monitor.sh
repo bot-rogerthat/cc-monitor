@@ -1,7 +1,7 @@
 #!/bin/bash
 # cc-monitor — Claude Code status line: context window + subscription usage
 #
-# Shows: ctx bar | 5h bar + reset timer | 7d bar | extra usage
+# Shows: ctx size and % | 5h usage + reset timer | 7d usage | optional process and session id
 # Requires: jq, curl
 
 # --- Configuration (override via environment variables) ---
@@ -11,6 +11,7 @@ STATE_DIR="${CC_MONITOR_STATE_DIR:-/tmp/claude-monitor}"
 NOTIFY_ENABLED="${CC_MONITOR_NOTIFY:-true}"
 NOTIFY_START="${CC_MONITOR_NOTIFY_START:-50}"
 PROCESS_NAME="${CC_MONITOR_PROCESS:-}"
+SHOW_SESSION_ID="${CC_MONITOR_SESSION_ID:-false}"
 
 # --- Install mode ---
 if [[ "${1:-}" == "--install" ]]; then
@@ -53,11 +54,23 @@ CTX_STATE="$STATE_DIR/ctx-$PPID"
 USAGE_CACHE="$STATE_DIR/usage-cache"
 USAGE_NOTIFY="$STATE_DIR/usage-notify"
 
-# Cleanup stale state files (older than 24h)
-find "$STATE_DIR" -name 'ctx-*' -mtime +1 -delete 2>/dev/null || true
+# Cleanup stale state files older than 24h (`-mtime +1` would mean older than two days)
+find "$STATE_DIR" \( -name 'ctx-*' -o -name 'ctxk-*' \) -mmin +1440 -delete 2>/dev/null || true
 
 # --- Context window ---
-CTX=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
+CTX=$(echo "$INPUT" | jq -r '.context_window.used_percentage // 0' 2>/dev/null | cut -d. -f1)
+case "$CTX" in ''|*[!0-9]*) CTX=0 ;; esac   # empty or broken stdin must not break the arithmetic below
+# Absolute size, not just the share of the window: on a 1M model 67% is 670k tokens, and every call
+# re-reads all of them. current_usage is what goes into the next call; fallback is the share of the window.
+CTX_TOK=$(echo "$INPUT" | jq -r '
+  (.context_window.current_usage // {}) as $u
+  | (($u.input_tokens // 0) + ($u.cache_creation_input_tokens // 0) + ($u.cache_read_input_tokens // 0)) as $t
+  | if $t > 0 then $t
+    else (((.context_window.used_percentage // 0) * (.context_window.context_window_size // 0)) / 100 | floor) end' 2>/dev/null)
+case "$CTX_TOK" in ''|*[!0-9]*) CTX_TOK=0 ;; esac
+CTX_K=$((CTX_TOK / 1000))
+# Per-session token count, for other tools that summarize all running sessions
+echo "$CTX_TOK" > "$STATE_DIR/ctxk-$PPID"
 
 LAST_CTX=0
 [ -f "$CTX_STATE" ] && LAST_CTX=$(cat "$CTX_STATE" 2>/dev/null || echo 0)
@@ -97,27 +110,32 @@ fetch_usage() {
   local token
   token=$(get_token)
   [ -z "$token" ] && return 1
-  local http_code retry_after
-  http_code=$(curl -sS --max-time 5 -w '%{http_code}' -o "$USAGE_CACHE.tmp" \
-    -D "$USAGE_CACHE.headers" \
-    -H "Authorization: Bearer $token" \
+  # Unique temp names per call: the status line renders in many sessions at once, and a shared
+  # temp file let two curls interleave, leaving a truncated JSON in the cache.
+  local tmp hdr http_code retry_after
+  tmp=$(mktemp "$USAGE_CACHE.XXXXXX") || return 1
+  hdr="$tmp.h"
+  # The token goes through a config on stdin, not -H: argv is visible in `ps` to any user process,
+  # including an agent whose `ps aux` ends up in its transcript.
+  http_code=$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS --config - \
+    --max-time 5 -w '%{http_code}' -o "$tmp" -D "$hdr" \
     -H "anthropic-beta: oauth-2025-04-20" \
     "https://api.anthropic.com/api/oauth/usage" 2>/dev/null)
 
-  if [ "$http_code" = "200" ] && jq -e '.five_hour.utilization // .seven_day.utilization' "$USAGE_CACHE.tmp" >/dev/null 2>&1; then
-    mv "$USAGE_CACHE.tmp" "$USAGE_CACHE"
-    rm -f "$backoff_file" "$USAGE_CACHE.headers"
+  if [ "$http_code" = "200" ] && jq -e '.five_hour.utilization // .seven_day.utilization' "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$USAGE_CACHE"
+    rm -f "$backoff_file" "$hdr"
   elif [ "$http_code" = "429" ]; then
     # Parse Retry-After header, fallback to BACKOFF_TTL
-    retry_after=$(grep -i 'retry-after' "$USAGE_CACHE.headers" 2>/dev/null | tr -d '\r' | awk '{print $2}')
+    retry_after=$(grep -i 'retry-after' "$hdr" 2>/dev/null | tr -d '\r' | awk '{print $2}')
     if [ -n "$retry_after" ] && [ "$retry_after" -gt 0 ] 2>/dev/null; then
       echo "$(( $(date +%s) + retry_after ))" > "$backoff_file"
     else
       echo "$(( $(date +%s) + BACKOFF_TTL ))" > "$backoff_file"
     fi
-    rm -f "$USAGE_CACHE.tmp" "$USAGE_CACHE.headers"
+    rm -f "$tmp" "$hdr"
   else
-    rm -f "$USAGE_CACHE.tmp" "$USAGE_CACHE.headers"
+    rm -f "$tmp" "$hdr"
   fi
 }
 
@@ -143,23 +161,19 @@ if [ -f "$USAGE_CACHE" ]; then
   FIVE_H=$(jq -r '.five_hour.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
   SEVEN_D=$(jq -r '.seven_day.utilization // 0' "$USAGE_CACHE" | cut -d. -f1)
 
-  # Reset timer: time until 5h window resets
-  local_resets_at=$(jq -r '.five_hour.resets_at // empty' "$USAGE_CACHE")
-  if [ -n "$local_resets_at" ]; then
-    # Try GNU date first (-d), then BSD date (-j -f)
-    reset_epoch=$(date -d "${local_resets_at}" "+%s" 2>/dev/null \
-      || /usr/bin/date -j -f "%Y-%m-%dT%H:%M:%S" "${local_resets_at%%.*}" "+%s" 2>/dev/null \
-      || echo 0)
-    now=$(date +%s)
-    remaining=$((reset_epoch - now))
-    if [ "$remaining" -gt 0 ]; then
-      hours=$((remaining / 3600))
-      mins=$(( (remaining % 3600) / 60 ))
-      if [ "$hours" -gt 0 ]; then
-        FIVE_RESET="${hours}h${mins}m"
-      else
-        FIVE_RESET="${mins}m"
-      fi
+  # Reset timer: time until 5h window resets. Parsed by jq, not date: stock macOS date has no -d,
+  # and BSD `date -j -f` reads the UTC timestamp as local time.
+  reset_epoch=$(jq -r '.five_hour.resets_at // empty
+    | sub("\\.[0-9]+"; "") | sub("(\\+00:00|Z)$"; "Z") | fromdateiso8601' "$USAGE_CACHE" 2>/dev/null)
+  case "$reset_epoch" in ''|*[!0-9]*) reset_epoch=0 ;; esac
+  remaining=$((reset_epoch - $(date +%s)))
+  if [ "$reset_epoch" -gt 0 ] && [ "$remaining" -gt 0 ]; then
+    hours=$((remaining / 3600))
+    mins=$(( (remaining % 3600) / 60 ))
+    if [ "$hours" -gt 0 ]; then
+      FIVE_RESET="${hours}h${mins}m"
+    else
+      FIVE_RESET="${mins}m"
     fi
   fi
 fi
@@ -231,6 +245,14 @@ if [ -n "$PROCESS_NAME" ]; then
   fi
 fi
 
+# --- Session id ---
+# Full id, not a prefix: `claude --resume` and transcript file names need all of it
+SID_STATUS=""
+if [[ "$SHOW_SESSION_ID" == "true" ]]; then
+  SID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
+  [ -n "$SID" ] && SID_STATUS=" | ${SID}"
+fi
+
 # --- Status line output ---
 pick_icon() {
   local p=$1
@@ -242,21 +264,28 @@ pick_icon() {
   fi
 }
 
-CTX_ICON=$(pick_icon "$CTX")
+# Context icon: by absolute size (100k/200k/300k/500k) or by share of the window, whichever is worse
+sev_pct() { if [ "$1" -ge 95 ]; then echo 4; elif [ "$1" -ge 90 ]; then echo 3; elif [ "$1" -ge 70 ]; then echo 2; elif [ "$1" -ge 50 ]; then echo 1; else echo 0; fi; }
+sev_tok() { if [ "$1" -ge 500 ]; then echo 4; elif [ "$1" -ge 300 ]; then echo 3; elif [ "$1" -ge 200 ]; then echo 2; elif [ "$1" -ge 100 ]; then echo 1; else echo 0; fi; }
+sev_icon() { case "$1" in 4) echo "🔴" ;; 3) echo "🟠" ;; 2) echo "🟡" ;; 1) echo "🔵" ;; *) echo "🟢" ;; esac; }
+S1=$(sev_pct "$CTX"); S2=$(sev_tok "$CTX_K")
+CTX_ICON=$(sev_icon $(( S1 > S2 ? S1 : S2 )))
+CTX_LABEL="ctx:${CTX}%"
+[ "$CTX_TOK" -gt 0 ] && CTX_LABEL="ctx:${CTX_K}k ${CTX}%"
 
 if [ "$FIVE_H" != "?" ]; then
   FIVE_ICON=$(pick_icon "$FIVE_H")
   SEVEN_ICON=$(pick_icon "$SEVEN_D")
 
-  OUT="${CTX_ICON} ctx:${CTX}%"
+  OUT="${CTX_ICON} ${CTX_LABEL}"
   OUT+=" ${FIVE_ICON} 5h:${FIVE_H}%"
   if [ -n "$FIVE_RESET" ]; then
     OUT+=" ~${FIVE_RESET}"
   fi
   OUT+=" ${SEVEN_ICON} 7d:${SEVEN_D}%"
-  OUT+="${PROC_STATUS}"
+  OUT+="${PROC_STATUS}${SID_STATUS}"
 
   echo "$OUT"
 else
-  echo "${CTX_ICON} ctx:${CTX}%${PROC_STATUS}"
+  echo "${CTX_ICON} ${CTX_LABEL}${PROC_STATUS}${SID_STATUS}"
 fi
