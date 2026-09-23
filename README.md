@@ -5,8 +5,10 @@
 `cc-monitor` is a status line for [Claude Code](https://github.com/anthropics/claude-code). It shows how big the current context is, how much of the 5-hour and 7-day subscription windows is used, and when the 5-hour window resets. It is a single bash script that needs only `jq` and `curl`.
 
 ```
-🟢 ctx:142k 14% 🟡 5h:73% ~1h12m 🟢 7d:34%
+🟢 ctx:142k 14% 🟡 5h:73% ~1h12m 🟢 7d:34% | 3f2a1b9c-0000-4000-8000-123456789abc
 ```
+
+The session id at the end is optional (`CC_MONITOR_SESSION_ID=true`); everything else is on by default.
 
 The motivation is specific: when you run several long sessions at once, the limits run out faster than you notice, and a 1M-token context grows quietly until every call re-reads hundreds of thousands of tokens. The built-in UI tells you about neither until it is too late. `cc-monitor` keeps both numbers in front of you and sends a desktop notification as they cross thresholds.
 
